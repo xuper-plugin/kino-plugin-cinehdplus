@@ -1,0 +1,4 @@
+Kino plugin "CineHD Plus". Site behaviour (the listing and search pages, a title's page, the player buttons and the four pages of the site's own API
+that lead to a server's address) was read from the live site and from the CloudStream provider "CineHdPlusProvider" in redblacker8/storm-ext (a fork of
+Stormunblessed/storm-ext); no code was copied from it. The extractors, the packer reader and the request helper are adapted from the Kino plugins
+"Latino" and "DoramasYT" (xuper-plugin, Apache-2.0), by the same author.
