@@ -2,7 +2,8 @@ import * as mixdrop from "./mixdrop.js";
 import * as streamtape from "./streamtape.js";
 import * as streamwish from "./streamwish.js";
 import * as vidhide from "./vidhide.js";
-const TABLE = { mixdrop, streamtape, streamwish, vidhide };
+import * as voe from "./voe.js";
+const TABLE = { mixdrop, streamtape, streamwish, vidhide, voe };
 
 /** `{ name, extract(embedUrl, req, kino) }` for an embed's host, or null when no extractor knows it. */
 export function extractorFor(embedUrl) {
