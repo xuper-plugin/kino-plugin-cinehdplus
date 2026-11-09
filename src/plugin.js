@@ -9,6 +9,7 @@ import { extractorFor } from "./extractors/index.js";
 import { makeReq, UA } from "./util/http.js";
 import { searchWithTerms } from "./util/terms.js";
 import { playable } from "./util/probe.js";
+import { homeWithin } from "./util/home.js";
 
 const CACHE_MS = 10 * 60 * 1000;
 const RESOLVE_MS = 60000;
@@ -118,13 +119,13 @@ async function rowOf(id, ref, genre) {
 // ---- exports ----
 
 export async function home() {
-  return (await Promise.all([
-    safeRow("peliculas", () => rowOf("peliculas", "list:peliculas")),
-    safeRow("series", () => rowOf("series", "list:series")),
-    safeRow("populares", () => rowOf("populares", "list:populares")),
-    safeRow("spopulares", () => rowOf("spopulares", "list:spopulares")),
-    safeRow("mejores", () => rowOf("mejores", "list:mejores")),
-  ])).filter(Boolean);
+  return homeWithin([
+    () => safeRow("peliculas", () => rowOf("peliculas", "list:peliculas")),
+    () => safeRow("series", () => rowOf("series", "list:series")),
+    () => safeRow("populares", () => rowOf("populares", "list:populares")),
+    () => safeRow("spopulares", () => rowOf("spopulares", "list:spopulares")),
+    () => safeRow("mejores", () => rowOf("mejores", "list:mejores")),
+  ]);
 }
 
 export async function browse(ref, cursor) {

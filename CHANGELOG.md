@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Home answers inside Kino's 20 s. Measured on users' devices (TV boxes and sticks) Home ran 21-26 s and Kino threw the whole answer away: the rows were asked with `Promise.all`, so the slowest site (each request may wait 15 s) decided. Now the rows are asked together and the ones that answer inside 11 s are shown; slow ones go on filling the cache for the next opening, and the last Home that worked is kept (12 h) for when none answers in time (`src/util/home.js`, tests in `test/home.test.mjs`).
+
 ## 0.1.3
 
 - VOE is now read with plain requests first, the way CloudStream's own extractor does (the page behind `voe.sx`'s redirect carries the video in a JSON script), and the hidden browser is only tried when that host cannot be reached. A page that asks for a human check is skipped, never solved. Needs the red permission to connect to any public server (`fetchHosts`), because VOE's redirect domain rotates.
