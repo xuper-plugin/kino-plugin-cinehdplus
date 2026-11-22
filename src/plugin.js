@@ -192,8 +192,9 @@ export async function categories() {
   return GENRES.map(([slug, name]) => ({ id: "g-" + slug, title: name, ref: "genre:" + slug }));
 }
 
-/** `{ id, slug }` of a ref with the given prefix ("m", "s" or "e"), or null. */
-const partsOf = (ref, prefix) => { const m = new RegExp(`^${prefix}:(\\d+):([a-z0-9-]+)$`).exec(String(ref || "")); return m ? { id: m[1], slug: m[2] } : null; };
+/** `{ id, slug }` of a ref with the given prefix ("m", "s" or "e"), or null. A slug may be percent-encoded: the site names
+ *  the episodes of an Asian series by their original title (`e:283327:%ed%91%b8...-1x1`), so `%` and either case are allowed. */
+const partsOf = (ref, prefix) => { const m = new RegExp(`^${prefix}:(\\d+):([A-Za-z0-9%._-]+)$`).exec(String(ref || "")); return m ? { id: m[1], slug: m[2] } : null; };
 const titlePage = (kind, id, slug) => cached("p:" + kind + id, async () => parseTitle(await getPage(`${SITE}/${kind === "movie" ? "pelicula" : "series-tv"}-${id}/${slug}/`)));
 
 /** A movie's own page: synopsis, genres, year and the picture, from the site. */

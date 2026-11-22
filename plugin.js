@@ -814,12 +814,13 @@ async function searchWithTerms(arg, one) {
 }
 
 // src/util/probe.js
+var PEEK_BYTES = 2048;
 async function playable(kino2, out, ms = 6e3) {
   try {
-    const r = await kino2.fetch(out.url, { headers: { ...out.headers || {} }, timeoutMs: ms });
-    return r.ok || r.status === 401 || r.status === 403;
+    const r = await kino2.fetch(out.url, { headers: { Range: `bytes=0-${PEEK_BYTES - 1}`, ...out.headers || {} }, timeoutMs: ms, maxBytes: PEEK_BYTES });
+    return r.ok || r.status === 401 || r.status === 403 || r.status === 416;
   } catch (e) {
-    return !!(e && e.code === "host_not_allowed");
+    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large"));
   }
 }
 
@@ -1052,7 +1053,7 @@ async function categories() {
   return GENRES.map(([slug, name]) => ({ id: "g-" + slug, title: name, ref: "genre:" + slug }));
 }
 var partsOf = (ref, prefix) => {
-  const m = new RegExp(`^${prefix}:(\\d+):([a-z0-9-]+)$`).exec(String(ref || ""));
+  const m = new RegExp(`^${prefix}:(\\d+):([A-Za-z0-9%._-]+)$`).exec(String(ref || ""));
   return m ? { id: m[1], slug: m[2] } : null;
 };
 var titlePage = (kind, id, slug) => cached("p:" + kind + id, async () => parseTitle(await getPage(`${SITE}/${kind === "movie" ? "pelicula" : "series-tv"}-${id}/${slug}/`)));
