@@ -225,14 +225,16 @@ function pageOf(ref) {
   return e ? `${SITE}/episodio-${e.id}/${e.slug}/` : null;
 }
 
-/** The buttons of a page in the order to try them: the preferred language first, then the ones with a plain-request extractor; Veev and StreamPlay have none and are left out. */
+/** The buttons of a page in the order to try them: the preferred language first, then the quicker inline hosts. Nothing is
+ *  dropped up front -- the shared resolver covers far more hosts than this plugin ever did, and a host it does not know
+ *  inline (Veev, StreamPlay, ...) is still handed to the WebView capture. */
 function plan(buttons) {
   let pref = "lat";
   try { pref = String(kino.config.get("audio") || "lat"); } catch (_) { pref = "lat"; }
   const lang = (b) => (b.lang === pref ? 0 : b.lang === "lat" ? 1 : b.lang === "cast" ? 2 : 3);
   const cost = (b) => (/^(mixdrop|mixdropp|streamtape)$/.test(b.domain) ? 0 : /^(streamwish|vidhide)$/.test(b.domain) ? 1 : 2);
   // `_lt` (the language tier) rides along so resolve can learn a better server order inside each language without disturbing it.
-  return buttons.filter((b) => !/^(veev|streamplay)$/.test(b.domain)).map((b, i) => ({ ...b, i, _lt: lang(b) })).sort((a, b) => a._lt - b._lt || cost(a) - cost(b) || a.i - b.i).slice(0, MAX_COPIES);
+  return buttons.map((b, i) => ({ ...b, i, _lt: lang(b) })).sort((a, b) => a._lt - b._lt || cost(a) - cost(b) || a.i - b.i).slice(0, MAX_COPIES);
 }
 
 // ---- learned server reliability (kept in storage; inside a language, the server that opens for this person is tried first next time) ----

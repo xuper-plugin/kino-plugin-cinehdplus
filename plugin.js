@@ -1092,7 +1092,7 @@ function plan(buttons) {
   }
   const lang = (b) => b.lang === pref ? 0 : b.lang === "lat" ? 1 : b.lang === "cast" ? 2 : 3;
   const cost = (b) => /^(mixdrop|mixdropp|streamtape)$/.test(b.domain) ? 0 : /^(streamwish|vidhide)$/.test(b.domain) ? 1 : 2;
-  return buttons.filter((b) => !/^(veev|streamplay)$/.test(b.domain)).map((b, i) => ({ ...b, i, _lt: lang(b) })).sort((a, b) => a._lt - b._lt || cost(a) - cost(b) || a.i - b.i).slice(0, MAX_COPIES);
+  return buttons.map((b, i) => ({ ...b, i, _lt: lang(b) })).sort((a, b) => a._lt - b._lt || cost(a) - cost(b) || a.i - b.i).slice(0, MAX_COPIES);
 }
 var STATS_KEY = "srvStats";
 var STATS_CAP = 24;
