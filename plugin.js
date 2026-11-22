@@ -763,7 +763,7 @@ async function resolveViaHelper(embedUrl, kino2, referer, allowCapture = true) {
   let streams = res && Array.isArray(res.streams) ? res.streams.slice() : [];
   const subtitles = res && Array.isArray(res.subtitles) ? res.subtitles.filter((x) => x && x.lang && x.url) : [];
   let captured = false;
-  if (!streams.length && allowCapture) {
+  if (!streams.length && (typeof allowCapture === "function" ? allowCapture() : allowCapture)) {
     streams = await captureStreams(kino2, embedUrl, referer);
     captured = streams.length > 0;
   }
@@ -870,7 +870,13 @@ async function homeWithin(jobs, { key = "home:last", budgetMs = BUDGET_MS } = {}
 globalThis.__kinoDropPendingFetches = true;
 var CACHE_MS = 10 * 60 * 1e3;
 var RESOLVE_MS = 6e4;
-var MAX_CAPTURES = 1;
+var MAX_CAPTURES = 2;
+var CAPTURE_PAGE_MS = 23e3;
+function takeCapture(budget) {
+  if (!budget || budget.captures <= 0 || budget.deadline - Date.now() < CAPTURE_PAGE_MS) return false;
+  budget.captures -= 1;
+  return true;
+}
 var MAX_COPIES = 10;
 var PAGE = 24;
 var STRINGS = {
@@ -1143,8 +1149,7 @@ async function embedOf(frame, req) {
 async function open(button, req, budget) {
   const embed = await embedOf(button.frame, req);
   if (!embed) return null;
-  const out = await resolveViaHelper(embed, kino, SITE + "/", budget.captures > 0);
-  if (out && out.captured) budget.captures -= 1;
+  const out = await resolveViaHelper(embed, kino, SITE + "/", () => takeCapture(budget));
   return out;
 }
 var labelOf = (b) => `${t(b.lang || "sub")} \xB7 ${SERVER_NAME[b.domain] || b.domain}`;
@@ -1158,7 +1163,7 @@ async function resolve(ref) {
   const buttons = plan(parseButtons(await getPage(pageUrl, { Referer: SITE + "/" })));
   if (!buttons.length) throw kino.error("not_found", "no servers on " + pageUrl, { userMessage: t("noStreams") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
-  const budget = { captures: MAX_CAPTURES };
+  const budget = { captures: MAX_CAPTURES, deadline: Date.now() + RESOLVE_MS };
   const stats = readStats();
   const order = only != null ? [only] : buttons.map((_, k) => k).sort((a, b) => buttons[a]._lt - buttons[b]._lt || scoreOf(buttons[b].domain, stats) - scoreOf(buttons[a].domain, stats) || a - b);
   const failures = [];

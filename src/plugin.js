@@ -22,7 +22,19 @@ globalThis.__kinoDropPendingFetches = true;
 const CACHE_MS = 10 * 60 * 1000;
 const RESOLVE_MS = 60000;
 const CAPTURE_MS = 20000;
-const MAX_CAPTURES = 1;
+const MAX_CAPTURES = 2;
+
+// A WebView capture costs up to 20 s whether or not it finds the video, so the budget is spent on the ATTEMPT, and a capture
+// only starts if a whole page still fits before this resolve's deadline (Kino gives a browser plugin 75 s; a resolve that
+// chained several failed captures ran past it and the person was left on an endless spinner).
+const CAPTURE_PAGE_MS = 23000;
+/** Spend one hidden-browser capture if the budget and the clock allow it; asked right before the capture starts. */
+function takeCapture(budget) {
+  if (!budget || budget.captures <= 0 || budget.deadline - Date.now() < CAPTURE_PAGE_MS) return false;
+  budget.captures -= 1;
+  return true;
+}
+
 const MAX_COPIES = 10;
 const PAGE = 24;
 const HLS = "application/vnd.apple.mpegurl";
@@ -284,8 +296,7 @@ async function open(button, req, budget) {
   if (!embed) return null;
   // Every hoster embed goes to the shared kino-resolver (door), which falls back to a WebView capture for gated
   // hosts (e.g. VOE) while this call still has capture budget. A `captured` stream skips the playable() probe below.
-  const out = await resolveViaHelper(embed, kino, SITE + "/", budget.captures > 0);
-  if (out && out.captured) budget.captures -= 1;
+  const out = await resolveViaHelper(embed, kino, SITE + "/", () => takeCapture(budget));
   return out;
 }
 
@@ -302,7 +313,7 @@ export async function resolve(ref) {
   const buttons = plan(parseButtons(await getPage(pageUrl, { Referer: SITE + "/" })));
   if (!buttons.length) throw kino.error("not_found", "no servers on " + pageUrl, { userMessage: t("noStreams") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
-  const budget = { captures: MAX_CAPTURES };
+  const budget = { captures: MAX_CAPTURES, deadline: Date.now() + RESOLVE_MS };
   // Auto pick: keep the plan's language tiers, but inside each try the server that has opened for this person first.
   // The cp:<base>@<i> indices and the alternatives stay in the stable plan order, so a saved copy ref always holds.
   const stats = readStats();
