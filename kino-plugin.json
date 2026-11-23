@@ -1,7 +1,7 @@
 {
   "id": "cinehdplus",
   "name": "CineHD Plus",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -156,5 +156,36 @@
   },
   "recommends": [
     "xuper-plugin/kino-plugin-kino-resolver"
-  ]
+  ],
+  "provides": {
+    "catalog": {
+      "summary": "Titles this plugin finds, for the author's other plugins",
+      "calls": {
+        "search": {
+          "in": {
+            "q": "string",
+            "type": "string?"
+          },
+          "out": "Item[]"
+        }
+      },
+      "types": {
+        "Item": {
+          "id": "string",
+          "ref": "string",
+          "title": "string",
+          "kind": "string",
+          "poster": "string?",
+          "backdrop": "string?",
+          "year": "string?",
+          "overview": "string?",
+          "tmdb": "number?"
+        }
+      }
+    }
+  },
+  "signature": {
+    "authorKey": "6693946bd5c56196960959c4b9665fad5094374bcb85ddb282f8bf762c835263",
+    "value": "1219e4f25bc5f0b846038769a17b00b44b6453bcd83601e6892a2ea6972b7d088a21875770c8564f74f5560b588297cd83ca72e9752c230a03deea3547c53902"
+  }
 }
