@@ -7,6 +7,7 @@
 import { SITE, API, GENRES, parseCards, parseTitle, parseButtons, inputValue, formAction, finalLink } from "./cinehdplus.js";
 import { makeReq, UA } from "./util/http.js";
 import { makeStandardScreen } from "./std/index.js";
+import { rankServers } from "./std/rank.js";
 import { LOGO, LOGO_ASPECT } from "./logo.js";
 import { resolveViaHelper, resolverInstalled } from "./resolve-door.js";
 import { searchWithTerms } from "./util/terms.js";
@@ -242,13 +243,14 @@ function pageOf(ref) {
 /** The buttons of a page in the order to try them: the preferred language first, then the quicker inline hosts. Nothing is
  *  dropped up front -- the shared resolver covers far more hosts than this plugin ever did, and a host it does not know
  *  inline (Veev, StreamPlay, ...) is still handed to the WebView capture. */
-function plan(buttons) {
+async function plan(buttons) {
   let pref = "lat";
   try { pref = String(kino.config.get("audio") || "lat"); } catch (_) { pref = "lat"; }
   const lang = (b) => (b.lang === pref ? 0 : b.lang === "lat" ? 1 : b.lang === "cast" ? 2 : 3);
-  const cost = (b) => (/^(mixdrop|mixdropp|streamtape)$/.test(b.domain) ? 0 : /^(streamwish|vidhide)$/.test(b.domain) ? 1 : 2);
+  // Inside a language, the hoster kino-resolver ranks best (its rank call, from the playback audit; StreamPlay's captcha last).
   // `_lt` (the language tier) rides along so resolve can learn a better server order inside each language without disturbing it.
-  return buttons.map((b, i) => ({ ...b, i, _lt: lang(b) })).sort((a, b) => a._lt - b._lt || cost(a) - cost(b) || a.i - b.i).slice(0, MAX_COPIES);
+  const ranked = await rankServers(kino, buttons, (b) => (b.domain === "mixdropp" ? "mixdrop" : b.domain), lang);
+  return ranked.map((b, i) => ({ ...b, i, _lt: lang(b) })).slice(0, MAX_COPIES);
 }
 
 // ---- learned server reliability (kept in storage; inside a language, the server that opens for this person is tried first next time) ----
@@ -312,7 +314,7 @@ export async function resolve(ref) {
   const pageUrl = pageOf(base);
   if (!pageUrl) throw kino.error("not_found", "unknown ref: " + ref);
   if (!(await resolverInstalled(kino))) throw kino.error("unavailable", "resolver missing", { userMessage: t("needResolver") });
-  const buttons = plan(parseButtons(await getPage(pageUrl, { Referer: SITE + "/" })));
+  const buttons = await plan(parseButtons(await getPage(pageUrl, { Referer: SITE + "/" })));
   if (!buttons.length) throw kino.error("not_found", "no servers on " + pageUrl, { userMessage: t("noStreams") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
   const budget = { captures: MAX_CAPTURES, deadline: Date.now() + RESOLVE_MS };
