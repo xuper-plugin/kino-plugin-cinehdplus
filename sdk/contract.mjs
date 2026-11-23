@@ -70,7 +70,7 @@ export function requiredExports(caps, settings = [], manifest = {}) {
     ...(settings.some((s) => s && (s.type === "status" || s.type === "qr")) ? [ui.status] : []),
     ...(settings.some((s) => s && s.type === "action") ? [ui.action] : []),
   ];
-  return [...new Set([...caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])), ...fromSettings, ...(manifest.section ? [contract.manifest.section.export] : []), ...(manifest.panel ? [contract.manifest.panel.exports.panel] : []), ...(manifest.pluginStore?.mode === "live" ? contract.kinoStore.liveExports : []), ...((manifest.screen?.replaces || []).includes("categories") ? [contract.output.categories.export] : [])])];
+  return [...new Set([...caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])), ...fromSettings, ...(manifest.section ? [contract.manifest.section.export] : []), ...(manifest.panel ? [contract.manifest.panel.exports.panel] : []), ...(manifest.setup ? Object.values(contract.manifest.setup.exports) : []), ...(manifest.pluginStore?.mode === "live" ? contract.kinoStore.liveExports : []), ...((manifest.screen?.replaces || []).includes("categories") ? [contract.output.categories.export] : [])])];
 }
 
 /** PluginManifest.kt's refusals for the `screen` field (apiVersion 14). */
@@ -275,6 +275,58 @@ export function installPluginGoOf(v, bad) {
   const repo = bareRepoOf(v.repo, I.maxRepoChars);
   if (repo === null) { bad(badRepo); return null; }
   return { repo };
+}
+
+/**
+ * PluginScreenOutput.pluginGoOf (apiVersion 20): a `go.plugin`'s value, only `repo`, `route`, `args` and `query`. `repo` is a
+ * GitHub `owner/name[/path]` (no URL, no pinned `@ref`; `@HEAD` is the default branch), returned as `address`, the canonical
+ * form. `route` is a go.screen route, `args` an object within the go.screen cap, `query` a string of at most `maxQueryChars`.
+ * Or null with [bad] told the first reason. `args` stays an object here (the app keeps its JSON string).
+ */
+export function pluginGoOf(v, bad) {
+  const P = contract.manifest.screen.goPlugin;
+  const S = contract.manifest.screen.limits;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) { bad("is not an object"); return null; }
+  if (Object.keys(v).some((k) => !P.fields.includes(k))) { bad(`takes only ${P.fields.join(", ")}`); return null; }
+  const address = githubAddressOf(v.repo, P.maxRepoChars);
+  if (address === null) { bad(`repo must be a GitHub owner/name (a sub-path is allowed, a URL or an @ref is not), at most ${P.maxRepoChars} characters`); return null; }
+  const out = { address };
+  const absent = (x) => x === undefined || x === null;
+  if (!absent(v.route)) {
+    if (typeof v.route !== "string" || !GO_ROUTE.test(v.route)) { bad(`route must be 1 to ${S.maxGoRouteChars} letters, digits or . _ ~ -`); return null; }
+    out.route = v.route;
+  }
+  if (!absent(v.args)) {
+    if (typeof v.args !== "object" || Array.isArray(v.args)) { bad("args is not an object"); return null; }
+    if (Buffer.byteLength(JSON.stringify(v.args).replace(/\//g, "\\/"), "utf8") > S.maxGoArgsBytes) { bad(`args is over ${S.maxGoArgsBytes} bytes`); return null; }
+    out.args = v.args;
+  }
+  if (!absent(v.query)) {
+    if (typeof v.query !== "string" || v.query.length > P.maxQueryChars) { bad(`query must be a string of at most ${P.maxQueryChars} characters`); return null; }
+    out.query = v.query;
+  }
+  return out;
+}
+
+/**
+ * PluginAddress.parse(text).canonical for a GitHub `owner/name[/path]` with no URL and no pinned ref, at most [maxChars]
+ * characters; null for anything else.
+ */
+export function githubAddressOf(text, maxChars) {
+  if (typeof text !== "string" || text.length > maxChars || text.includes("://")) return null;
+  let s = text.trim().replace(/\/+$/, "");
+  const at = s.lastIndexOf("@");
+  if (at >= 0) {
+    if (s.slice(at + 1) !== "HEAD") return null;
+    s = s.slice(0, at);
+  }
+  const parts = s.split("/");
+  if (parts.length < 2) return null;
+  const name = parts[1].replace(/\.git$/, "");
+  if (!ADDRESS_OWNER.test(parts[0]) || !ADDRESS_NAME.test(name) || name === "." || name === "..") return null;
+  const path = parts.slice(2);
+  if (path.some((seg) => !ADDRESS_NAME.test(seg) || seg === "." || seg === "..")) return null;
+  return [parts[0], name, ...path].join("/");
 }
 
 /**
@@ -542,6 +594,9 @@ function enhance(json, key, block, current, opts, exports) {
   if (has(block, "jobs")) candidate.jobs = block.jobs;
   // apiVersion 20: the web window the person drives, offered to a Kino that has it by a plugin on an older apiVersion.
   if (has(block, "visualBrowser")) candidate.visualBrowser = block.visualBrowser;
+  if (has(block, "slot")) candidate.slot = block.slot;
+  if (has(block, "openFrom")) candidate.openFrom = block.openFrom;
+  if (has(block, "setup")) candidate.setup = block.setup;
   candidate.apiVersion = key;
   const r = validateManifestObject(candidate, opts);
   if (!r.ok) return `${r.field}: ${r.message}`;
@@ -569,6 +624,9 @@ function enhance(json, key, block, current, opts, exports) {
     // Task 18 (G1): the jobs of a `schedule` an enhancement added (the check at [key] makes each need the other).
     jobs: r.manifest.jobs || [],
     visualBrowser: has(block, "visualBrowser") ? r.manifest.visualBrowser : current.visualBrowser,
+    slot: has(block, "slot") ? r.manifest.slot : current.slot,
+    openFromRoutes: has(block, "openFrom") ? r.manifest.openFromRoutes : current.openFromRoutes,
+    setup: has(block, "setup") ? r.manifest.setup : current.setup,
     enhancementsApplied: [...current.enhancementsApplied, key],
   };
   // Task 18 (G13): the apiVersion the settings list was read at (the block's key when it carried one); kept out of the manifest's
@@ -584,6 +642,47 @@ function enhance(json, key, block, current, opts, exports) {
     if (missing.length) return E.dropped.missingExports.replace("{exports}", missing.join(", "));
   }
   return { json: candidate, manifest: next };
+}
+
+/**
+ * ManifestParser.resolveAheadOf: what "resolveAhead" ([raw], as JSON.parse read it) declares in a manifest whose catalogOnly and
+ * browser (as the app honours them at its apiVersion) are [catalogOnly] and [browser]: { value, dropped }, value whether Kino may
+ * resolve the plugin ahead, dropped why the field was dropped (contract.manifest.resolveAhead's words: what the app logs and
+ * validate.mjs warns), null when it was not (left out, null, false, or a true that stands). Never a refusal.
+ */
+export function resolveAheadOf(raw, catalogOnly, browser) {
+  const R = contract.manifest.resolveAhead;
+  if (raw === undefined || raw === null || raw === false) return { value: false, dropped: null };
+  if (raw !== true) return { value: false, dropped: R.notBooleanMessage };
+  const declared = { catalogOnly, browser };
+  const beside = R.ignoredBeside.find((f) => declared[f] === true);
+  return beside === undefined ? { value: true, dropped: null } : { value: false, dropped: R.ignoredMessage.replace("{name}", beside) };
+}
+
+/**
+ * The optional export prepare (contract.prepare, additive; PlayAhead.modeOf and skipPlugin in the app): where Kino never calls
+ * it, one warning saying why. [exported] whether the entry exports prepare(), [m] the manifest as validateManifest read it
+ * (resolveAhead, catalogOnly and browser as the app honours them, looked at in contract.prepare.notCalledBeside's order).
+ * None when it is not exported, or when Kino calls it ([prepareNote] says what that means). validate.mjs warns, run.mjs too.
+ */
+export function prepareWarnings(exported, m) {
+  if (!exported) return [];
+  const P = contract.prepare;
+  const why = {
+    resolveAhead: '"resolveAhead": true, so Kino resolves ahead instead',
+    catalogOnly: '"catalogOnly": true, so Kino never calls its resolve',
+    browser: '"browser" (true or "pages"): its hidden pages need a play the person started',
+  };
+  const beside = P.notCalledBeside.find((f) => m[f] === true);
+  if (beside !== undefined) return [`${P.export}: Kino never calls it beside ${why[beside]}`];
+  if (!(m.capabilities || []).includes(P.capability)) return [`${P.export}: Kino never calls it in a plugin without the "${P.capability}" capability`];
+  return [];
+}
+
+/** What an exported prepare() Kino calls means for the author: when, with what, its limits, and what an older Kino does. */
+export function prepareNote() {
+  const P = contract.prepare;
+  return `${P.export}: Kino ${contract.additiveFromApp[`export.${P.export}`]} or later calls ${P.export}(ref) once the person has stayed about ${P.dwellMs / 1000} s on one of your title pages, with the ref resolve gets for what its play button would start, as a background call of ${contract.timeoutsMs.prepare / 1000} s (never "No responde"), at most once every ${P.perRefEveryMs / 60000} minutes per ref and ${P.perMinute} a minute; its answer is ignored and pressing play calls resolve as always. It may run for titles nobody plays: it must not start or count a play, nor spend a quota, a trial or a free play. An older Kino never calls it`;
 }
 
 function validateManifestObject(o, { knownPermissions = contract.permissions } = {}) {
@@ -883,6 +982,77 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
       };
     }
   }
+  // apiVersion 23: the player slot's elements (PluginManifest.kt). The block and the capability need each other; below 23 both
+  // are unknown. 1 to maxElements elements, each { id, kind, mode }, ids unique.
+  let slot = null;
+  if (o.apiVersion >= contract.playerSlot.apiVersion) {
+    const P = contract.playerSlot;
+    if (!caps.includes(P.capability)) {
+      if (o.slot !== undefined) return bad("slot", P.needsCapabilityMessage);
+    } else {
+      if (o.slot === undefined) return bad("capabilities", P.capabilityNeedsMessage);
+      if (o.slot === null || typeof o.slot !== "object" || Array.isArray(o.slot)) return bad("slot", P.notObjectMessage);
+      const list = o.slot.elements;
+      if (!Array.isArray(list) || list.length < 1 || list.length > P.maxElements) return bad("slot", P.badElementsMessage);
+      const idPattern = re(P.idPattern);
+      const elements = [];
+      for (const e of list) {
+        if (e === null || typeof e !== "object" || Array.isArray(e)) return bad("slot", P.badElementMessage);
+        if (typeof e.id !== "string" || !idPattern.test(e.id) || !P.kinds.includes(e.kind) || !P.modes.includes(e.mode)) return bad("slot", P.badElementMessage);
+        elements.push({ id: e.id, kind: e.kind, mode: e.mode });
+      }
+      if (new Set(elements.map((e) => e.id)).size !== elements.length) return bad("slot", P.duplicateIdMessage);
+      slot = { elements, hasFixed: elements.some((e) => e.mode === "fixed") };
+    }
+  }
+  // apiVersion 20: the screen routes other plugins' cards may open (PluginManifest.kt openFromRoutes). They are this plugin's own
+  // screens, so the capability is needed; the routes are read like a go.screen route.
+  let openFromRoutes = [];
+  if (o.openFrom !== undefined) {
+    const P = m.openFrom;
+    if (o.apiVersion < P.apiVersion) return bad("openFrom", P.needsApiMessage);
+    if (o.openFrom === null || typeof o.openFrom !== "object" || Array.isArray(o.openFrom)) return bad("openFrom", P.notObjectMessage);
+    if (!caps.includes("screen")) return bad("openFrom", P.needsScreenMessage);
+    const list = o.openFrom[P.routesField];
+    if (!Array.isArray(list) || list.length < 1 || list.length > P.maxRoutes) return bad("openFrom", P.badRoutesMessage);
+    if (!list.every((r) => typeof r === "string" && GO_ROUTE.test(r)) || new Set(list).size !== list.length) return bad("openFrom", P.badRoutesMessage);
+    openFromRoutes = [...list];
+  }
+  // apiVersion 30 (PluginManifest.kt setup): a setup step Kino can run and show; the route is one of this plugin's own screens
+  // (needs the capability) and inputs a whitelist over its OWN select, toggle or text settings (PluginSetupDecl).
+  let setup = null;
+  if (o.setup !== undefined) {
+    const P = m.setup;
+    if (o.apiVersion < P.apiVersion) return bad("setup", P.needsApiMessage);
+    if (o.setup === null || typeof o.setup !== "object" || Array.isArray(o.setup)) return bad("setup", P.notObjectMessage);
+    let route = null;
+    if (has(o.setup, "route")) {
+      if (!caps.includes("screen")) return bad("setup", P.needsScreenMessage);
+      if (typeof o.setup.route !== "string" || !GO_ROUTE.test(o.setup.route)) return bad("setup", P.badRouteMessage);
+      route = o.setup.route;
+    }
+    const inputs = {};
+    if (has(o.setup, "inputs")) {
+      const map = o.setup.inputs;
+      if (map === null || typeof map !== "object" || Array.isArray(map)) return bad("setup", P.badInputsMessage);
+      for (const key of Object.keys(map)) {
+        const decl = map[key];
+        if (decl === null || typeof decl !== "object" || Array.isArray(decl)) return bad("setup", P.badInputsMessage);
+        const own = (Array.isArray(o.settings) ? o.settings : []).find((x) => x && x.key === key);
+        if (!own || !P.inputTypes.includes(own.type) || decl.type !== own.type) return bad("setup", P.badInputsMessage);
+        let options = [];
+        if (own.type === "select") {
+          const list = decl.options;
+          if (!Array.isArray(list) || list.length < 1 || !list.every((v) => typeof v === "string") || new Set(list).size !== list.length) return bad("setup", P.badInputsMessage);
+          const known = (Array.isArray(own.options) ? own.options : []).map((x) => x && x.value);
+          if (!list.every((v) => known.includes(v))) return bad("setup", P.badInputsMessage);
+          options = [...list];
+        } else if (has(decl, "options")) return bad("setup", P.badInputsMessage);
+        inputs[key] = { key, type: own.type, options };
+      }
+    }
+    setup = { route, inputs };
+  }
   // apiVersion 9: where the settings go (rows, columns, cards). A list here; validate.mjs and panel.mjs judge the rest.
   if (o.settingsLayout !== undefined && o.apiVersion >= m.settingsLayout.apiVersion && !Array.isArray(o.settingsLayout)) return bad("settingsLayout", 'The "settingsLayout" field must be a list');
   // apiVersion 6: the palette. Format only; the guardrails run where it is used.
@@ -901,7 +1071,7 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
   // apiVersion 18: the app themes. Format only; resolveAppTheme applies the guardrails.
   let appThemes = [];
   if (o.appThemes !== undefined && o.apiVersion >= m.appThemes.apiVersion) {
-    const parsed = parseAppThemes(o.appThemes);
+    const parsed = parseAppThemes(o.appThemes, o.apiVersion);
     if (!parsed.ok) return bad("appThemes", parsed.message);
     appThemes = parsed.themes;
   }
@@ -992,7 +1162,10 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
   }
   // Below apiVersion 9 the English keys are unknown: dropped here, so nothing downstream (the form, englishCoverage) sees them.
   const settingsOut = o.apiVersion >= contract.settings.english.apiVersion ? o.settings || [] : withoutEnglish(o.settings || []);
-  const out = { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: settingsOut, insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, categories, debug, telemetry, browser, browserPages, visualBrowser, section, panel, screen, theme, appThemes, secrets, secretKeyEncodings, catalogOnly };
+  // "resolveAhead" (additive: valid at every apiVersion), read last as the app reads it: a hint, so what it drops never refuses
+  // the plugin (validate.mjs warns). Judged beside catalogOnly and browser as the app honours them.
+  const resolveAhead = resolveAheadOf(o.resolveAhead, catalogOnly, browser).value;
+  const out = { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: settingsOut, insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, categories, debug, telemetry, browser, browserPages, visualBrowser, section, panel, screen, slot, theme, appThemes, secrets, secretKeyEncodings, catalogOnly, openFromRoutes, setup, resolveAhead };
   // The parsed `recommends` (deduplicated, as written); none when it declares none.
   if (recommends.length) out.recommends = recommends; else delete out.recommends;
   // Task 8q: the parsed jobs (labels scrubbed, options sorted); none below apiVersion 14 or without `schedule`.
@@ -1734,10 +1907,10 @@ function items(list, max, ctx, drop) {
  * kind and `adult`), read by the same item parser as `home` rows, with its drop lines; at most [max].
  */
 export function screenItems(list, max, drop, allowSeries = true) {
-  // A screen's images are https only (spec Safety): a cleartext poster or backdrop is blanked, Kino's placeholder shows.
-  const https = (u) => (u.startsWith("https://") ? u : "");
-  return items(list, max, { allowSeries, allowLive: true, allowAudio: true, allowAdult: true, servers: [] }, drop)
-    .map((x) => ({ ...x, poster: https(x.poster), backdrop: https(x.backdrop) }));
+  // A poster or backdrop follows the Home rule (imageVerdict: http or https on a public host, never the home network), so an IPTV
+  // panel's http channel logo shows (additive, contract.manifest.screen.httpImages; https only before); a refused one is blank and
+  // Kino's placeholder shows. The node's headers never go with an http picture.
+  return items(list, max, { allowSeries, allowLive: true, allowAudio: true, allowAdult: true, servers: [] }, drop);
 }
 
 /**
@@ -1921,19 +2094,57 @@ function headersOf(h) {
 }
 
 /**
- * The optional `drm` block, read ONLY for a plugin that declares the capability (`allowDrm`) and
- * when it is the only DRM-shaped key present; any other of `drmKeys` refuses the stream as it
- * always did. Mirrors the app's PluginOutput.drmOf, message for message.
+ * The optional `drm` of a stream: one block, or (apiVersion 24, `allowList`) a list of them, best first. Read ONLY for a
+ * plugin that declares the capability (`allowDrm`) and when it is the only DRM-shaped key present; any other of `drmKeys`
+ * refuses the stream as it always did. A single block that is wrong refuses the stream; inside a list a wrong entry is
+ * dropped (and reported through `drop`), at most `maxOptions` are kept, and a list with none left refuses.
+ * Returns the usable options in order ([] = a clear stream). Mirrors the app's PluginOutput.drmOf, message for message.
  */
-function drmOf(value, check, allowDrm) {
+function drmOf(value, check, allowDrm, allowList, drop) {
   const present = o().drmKeys.filter((k) => k in value);
-  if (present.length === 0) return null;
+  if (present.length === 0) return [];
   if (!allowDrm || present.length !== 1 || present[0] !== o().drm.field) throw new Error("the video has DRM and plugins don't support it");
   const d = value[o().drm.field];
+  if (allowList && Array.isArray(d)) {
+    const options = [];
+    d.forEach((entry, i) => {
+      if (options.length >= o().drm.maxOptions) return;
+      try { options.push(drmOptionOf(entry, check, allowList)); } catch (e) { drop(`drm option ${i} dropped: ${e.message}`); }
+    });
+    if (options.length === 0) throw new Error("the video's DRM is not valid");
+    return options;
+  }
+  return [drmOptionOf(d, check, allowList)];
+}
+
+/** One DRM block (the app's drmOptionOf); throws when it is not usable. */
+function drmOptionOf(d, check, allowClearKey) {
   if (d === null || typeof d !== "object" || Array.isArray(d)) throw new Error("the video's DRM is not valid");
-  if (!o().drm.types.includes(d.type)) throw new Error("the video uses a DRM Kino doesn't support");
-  check(d.licenseUrl, "the video's license");
-  return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
+  if (d.type === "widevine") {
+    check(d.licenseUrl, "the video's license");
+    return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
+  }
+  if (d.type === "clearkey" && allowClearKey) {
+    const keys = clearKeysOf(d.keys);
+    if (Object.keys(keys).length === 0) throw new Error("the video's DRM is not valid");
+    return { type: d.type, keys };
+  }
+  throw new Error("the video uses a DRM Kino doesn't support");
+}
+
+/** A ClearKey block's `keys`, id -> key: exactly `hexDigits` hex digits each (an id may be a dashed UUID), lowercased; a bad pair is dropped, at most `maxPairs` kept. */
+function clearKeysOf(keys) {
+  const out = {};
+  if (keys === null || typeof keys !== "object" || Array.isArray(keys)) return out;
+  const ck = o().drm.clearKey;
+  const hex = new RegExp(`^[0-9a-f]{${ck.hexDigits}}$`);
+  for (const name of Object.keys(keys)) {
+    if (Object.keys(out).length >= ck.maxPairs) break;
+    const id = name.replaceAll("-", "").toLowerCase();
+    const key = typeof keys[name] === "string" ? keys[name].toLowerCase() : "";
+    if (hex.test(id) && hex.test(key)) out[id] = key;
+  }
+  return out;
 }
 
 /** PluginOutput.SIGNED_CHANNEL: an inline channel stream that asks for signing. */
@@ -2140,6 +2351,23 @@ export function segmentSkip(segments) {
   return { openingStartMs: opening ? opening.startMs : null, openingEndMs: opening ? opening.endMs : null, endingStartMs: ending ? ending.startMs : null };
 }
 
+/**
+ * A Stream's `subtitles` as the app's PluginOutput.subtitlesOf keeps them. An entry with non-blank `text` (apiVersion 25) is an inline
+ * track and wins over a `url` on the same entry: it needs `format` vtt or srt and at most maxSubtitleTextBytes UTF-8 bytes or it is
+ * dropped, and its url is "" (no host check). Any other entry stays or goes by [sideOk] on its url, as before.
+ */
+function streamSubtitles(value, sideOk) {
+  const out = [];
+  for (const s of (Array.isArray(value) ? value : []).slice(0, o().maxSubtitles)) {
+    if (s && typeof s.text === "string" && s.text.trim()) {
+      if ((s.format !== "vtt" && s.format !== "srt") || Buffer.byteLength(s.text, "utf8") > o().maxSubtitleTextBytes) continue;
+      const lang = typeof s.lang === "string" || typeof s.lang === "number" ? String(s.lang).trim().slice(0, 20) : "";
+      out.push({ lang: lang || "und", url: "", format: s.format, text: s.text });
+    } else if (sideOk(s && s.url, "the subtitle")) out.push(s);
+  }
+  return out;
+}
+
 function subtitleTracks(value, { manifest, servers }, drop) {
   if (!Array.isArray(value)) { drop("subtitles: the answer is not a list"); return []; }
   const check = urlChecker(manifest, servers);
@@ -2231,7 +2459,8 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false, inlin
   const external = !liveChannel && !inline ? externalOf(value.external, manifest) : null;
   if (external) return { external, headers: {}, subtitles: [], audioTracks: [], expiresInSeconds: 0, drm: null };
   const check = urlChecker(manifest, servers);
-  const drm = drmOf(value, check, allowDrm);
+  const drmOptions = drmOf(value, check, allowDrm, (manifest.apiVersion || 1) >= o().drm.listApiVersion, drop);
+  const drm = drmOptions[0] || null;
   // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
   // license stay on the strict rule below. `streamHosts: "any"` on a movie or an episode is the app's
   // broad-video rule (EffectiveHosts.anyPublicVideoHost, the player's own resolve): the URL AND its
@@ -2252,7 +2481,7 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false, inlin
     try { check(url, what); return true; } catch { return false; }
   };
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
-  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => sideOk(s && s.url, "the subtitle"));
+  const subtitles = streamSubtitles(value.subtitles, sideOk);
   // One URL is one merged child in the app: a repeated URL is kept once, the first wins.
   const audioUrls = new Set();
   const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
@@ -2291,7 +2520,7 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false, inlin
     if (label) rest.label = label;
   }
   const durationMs = Number.isFinite(value.durationMs) && value.durationMs > 0 ? Math.floor(value.durationMs) : 0;
-  const out = { ...rest, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm, ...(alternatives.length ? { alternatives } : {}) };
+  const out = { ...rest, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm, ...(drmOptions.length > 1 ? { drmOptions } : {}), ...(alternatives.length ? { alternatives } : {}) };
   const raw = value[o().skip.field];
   const skip = liveChannel ? null : skipOf(raw, durationMs);
   if (raw !== undefined) {
@@ -2322,7 +2551,7 @@ function byteStream(value, manifest, servers, drop) {
     if (manifest.streamHostsAny) return anyPublic(url);
     try { check(url, what); return true; } catch { return false; }
   };
-  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => sideOk(s && s.url, "the subtitle"));
+  const subtitles = streamSubtitles(value.subtitles, sideOk);
   const audioUrls = new Set();
   const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
     if (!sideOk(a && a.url, "the audio")) return false;
@@ -3334,6 +3563,8 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
     case "storeSync": case "storeList": case "storeSearch": return { value: storeAnswer(fn, parsed, drop), drops };
     // Kino only needs track() to return (anything, `{ ok: true }` by convention) or throw: a kino.error code says whether to retry.
     case "track": return { value: parsed, drops };
+    // contract.prepare: Kino ignores whatever prepare() returns, a failure too; only the size cap above applies, as to any answer.
+    case contract.prepare.export: return { value: parsed, drops };
     // apiVersion 7's segments: what the app's Segments.parse keeps, judged against the query's durationMs.
     case "segments": return { value: segmentsAnswer(parsed, segmentsQuery?.durationMs, drop), drops };
     // apiVersion 19's lyrics: what the app's Lyrics.parse keeps, and what it would draw for the query's durationMs.

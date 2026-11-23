@@ -770,6 +770,43 @@ export function kinoTmdbRequest(path, params) {
   return { path, query: pairs.map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&") };
 }
 
+/**
+ * kino.image.thumbnail's request as the app checks it (PluginThumbnail.parse), or a thrown `bad_request`: an https address and
+ * whole-number options inside contract.kinoImage's ranges. Answers `{ url, maxWidth, maxBytes }` with the defaults applied.
+ */
+export function kinoImageRequest(url, options) {
+  const I = contract.kinoImage;
+  const bad = (why) => kinoError("bad_request", "kino.image.thumbnail: " + why);
+  if (typeof url !== "string" || url.length > I.maxUrlChars || !/^https:\/\/./i.test(url.trim())) throw bad("needs an https address");
+  if (options !== undefined && options !== null && !plainObject(options)) throw bad("the options must be an object");
+  const o = options || {};
+  const whole = (key, min, max, dflt) => {
+    const v = o[key];
+    if (v === undefined || v === null) return dflt;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) throw bad(`${key} must be a whole number from ${min} to ${max}`);
+    return v;
+  };
+  return { url: url.trim(), maxWidth: whole("maxWidth", I.minMaxWidth, I.maxMaxWidth, I.defaultMaxWidth), maxBytes: whole("maxBytes", I.minMaxBytes, I.maxMaxBytes, I.defaultMaxBytes) };
+}
+
+/** A JPEG's or PNG's (width, height) from its header, or null: the only pictures the kit can pass through without a codec. */
+export function kitImageSize(b) {
+  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return { type: "png", w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) return null;
+      const m = b[i + 1];
+      if (m === 0xff) { i++; continue; }
+      if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      const len = b.readUInt16BE(i + 2);
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { type: "jpeg", w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
+      i += 2 + len;
+    }
+  }
+  return null;
+}
+
 /** The `no_tmdb_key` error, with the app's sentence for the person in [lang] (Spanish for "es…", else English). */
 export function noTmdbKeyError(lang, message = "no TMDB key: neither Kino's nor the person's") {
   const words = contract.kinoTmdb.noKeyUserMessage;
@@ -857,7 +894,7 @@ function deviceFor(device, env) {
  * kino.device (Kino 0.9.55, contract.kinoDevice): [device] ("phone" or "tv", run.mjs --device), else env KINO_DEVICE,
  * else "phone". Anything else throws: a typo must not silently test the other UI.
  */
-export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, nuvioFixture = undefined, libraryFixture = undefined, libraryRevoked = false, callFunction = null, env = process.env, now = Date.now, syncCall = false, qrScan = undefined, visualBrowser = undefined, deliverScreenEvent = undefined, room = undefined, roomRevoked = false, ai = undefined, aiRevoked = false, identityRevoked = false, entryFile = null, noticesFile = null, notificationsRevoked = false, coinsRevoked = false, shared = undefined, jobsOn = [], protocol = undefined } = {}) {
+export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, thumbnailFixture = undefined, nuvioFixture = undefined, libraryFixture = undefined, libraryRevoked = false, callFunction = null, env = process.env, now = Date.now, syncCall = false, qrScan = undefined, visualBrowser = undefined, deliverScreenEvent = undefined, room = undefined, roomRevoked = false, ai = undefined, aiRevoked = false, identityRevoked = false, entryFile = null, noticesFile = null, notificationsRevoked = false, coinsRevoked = false, shared = undefined, jobsOn = [], protocol = undefined } = {}) {
   const f = contract.fetch;
   // [syncCall]: this kino runs a syncProvider's syncPull/syncPush (contract.fetch.syncCall): its requests and responses may
   // carry the declared blob, ceil(sync.maxBlobBytes * 4/3) + envelopeChars, like the app; every other call keeps the defaults.
@@ -1783,6 +1820,50 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     return body;
   }
 
+  // --- kino.image.thumbnail (Kino 0.9.84): the app downloads under the plugin's own fetch rules and re-encodes a small JPEG
+  // natively. Node has no image codec, so the kit downloads the same way (kino.fetch: hosts, https, budget) and answers the
+  // bytes as a data: address ONLY when they already are a JPEG or PNG within maxWidth and maxBytes; anything else is
+  // `kit_unsupported` (the app does it). KINO_THUMBNAIL_FIXTURE=<file> (or the thumbnailFixture option) answers that file. ---
+  const IM = contract.kinoImage;
+  const imageBucket = tokenBucket(IM.perMinute, 60_000, now);
+  const thumbnailFixtureFile = thumbnailFixture === undefined ? env.KINO_THUMBNAIL_FIXTURE : thumbnailFixture;
+  const unsupported = (why) => {
+    writeErr(`kino.image.thumbnail: the kit can't make a thumbnail (${why}); in the Kino app it works for any JPEG, PNG, WebP or GIF. Use KINO_THUMBNAIL_FIXTURE=<file> to try your plugin offline.`);
+    return kinoError("kit_unsupported", `the kit has no image codec (${why}); in the Kino app this works`);
+  };
+  async function imageThumbnail(url, options) {
+    await null;
+    const req = kinoImageRequest(url, options);
+    if (!imageBucket.take()) throw kinoError("rate_limited", `too many kino.image calls (at most ${IM.perMinute} a minute); wait a moment`);
+    if (typeof thumbnailFixtureFile === "string" && thumbnailFixtureFile) {
+      if (!existsSync(thumbnailFixtureFile)) throw kinoError("not_found", "KINO_THUMBNAIL_FIXTURE doesn't exist: " + thumbnailFixtureFile.slice(0, 200));
+      return IM.output + readFileSync(thumbnailFixtureFile).toString("base64");
+    }
+    let r;
+    try {
+      r = await fetchGated(req.url, { method: "GET" });
+    } catch (e) {
+      // The plugin's own fetch rules decide: its codes pass through (host_not_allowed, timeout, network, too_large, rate_limited).
+      const c = e && e.code;
+      throw kinoError(c === "invalid_request" ? "bad_request" : IM.errorCodes.includes(c) ? c : "network", e && e.message);
+    }
+    if (!r.ok) throw kinoError(r.status === 404 || r.status === 410 ? "not_found" : "network", `the picture's server answered ${r.status}`);
+    if (r.truncated) throw kinoError("too_large", "the picture is over " + kb(IM.maxDownloadBytes));
+    const bytes = Buffer.from(r.base64(), "base64");
+    if (bytes.length > IM.maxDownloadBytes) throw kinoError("too_large", "the picture is over " + kb(IM.maxDownloadBytes));
+    const info = kitImageSize(bytes);
+    if (!info) {
+      const gif = bytes.length > 4 && bytes.subarray(0, 4).toString("latin1") === "GIF8";
+      const webp = bytes.length > 12 && bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP";
+      if (gif || webp) throw unsupported(gif ? "a GIF needs re-encoding" : "a WebP needs re-encoding");
+      throw kinoError("not_image", "that address is not a JPEG, PNG, WebP or GIF picture");
+    }
+    if (info.w > req.maxWidth) throw unsupported(`the picture is ${info.w} px wide, over maxWidth ${req.maxWidth}`);
+    if (bytes.length > req.maxBytes) throw unsupported(`the picture is ${bytes.length} bytes, over maxBytes ${req.maxBytes}`);
+    // The app always answers a JPEG; the kit can only hand a PNG back as the PNG it is.
+    return (info.type === "png" ? "data:image/png;base64," : IM.output) + bytes.toString("base64");
+  }
+
   // --- kino.library (apiVersion 14, capability "library"): the app reads the active profile's history and favorites; the kit
   // answers from a fixture with the app's rules (PluginLibraryBridge), so a plugin sees the same refusals and the same shape.
   const LB = contract.kinoLibrary;
@@ -1931,6 +2012,20 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
       const o = currentQrOrigin();
       const fn = o.fn ?? callFunction ?? undefined;
       return { ...o, fn, job: fn === contract.kinoAi.fromJob || kitJobRequest.getStore() !== undefined };
+    },
+  });
+
+  // --- kino.vault (apiVersion 28, capability "vault"): the plugin's own sealed secret. The real Kino runs the whole
+  // exchange and resolves it by (pluginId, author); the kit hands back a fake you set with KINO_VAULT_SECRET (the JSON
+  // secret) or makes get() throw KINO_VAULT_ERROR (a code like not_member, not_found or rate_limited). ---
+  const vaultApi = Object.freeze({
+    get: async () => {
+      await null;
+      const code = env.KINO_VAULT_ERROR;
+      if (code) { const e = new Error(`kino.vault.get: ${code}`); e.code = code; throw e; }
+      const raw = env.KINO_VAULT_SECRET;
+      if (raw === undefined || raw === "") return null;
+      try { return JSON.parse(raw); } catch { return raw; }
     },
   });
 
@@ -2089,6 +2184,105 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     return Object.freeze({ scan });
   })();
 
+  // --- kino.progress (apiVersion 22, capability "progress"): the app's PluginProgress (the argument rules), PluginProgressStore
+  // (what is kept) and PluginProgressBridge (the answers), in memory for this run. Kino draws nothing from it: the plugin builds
+  // its own shelf from `list`, and `resume` is its own opaque JSON that is handed back as it was set. Limits and codes are
+  // contract.kinoProgress. The kit writes nothing to disk, so "at most every 2 s" and the 20 sets a second (coalesced in the app,
+  // never an error) have nothing to do here. A poster is kept only when it is an https address; anything else costs only the poster. ---
+  const progressApi = (() => {
+    if (!(manifest.capabilities || []).includes(contract.kinoProgress.capability)) return null;
+    const G = contract.kinoProgress;
+    const MAX_TITLE_CHARS = 200; // PluginOutput.MAX_TITLE_CHARS, the app's cap for an item's title
+    const idRe = new RegExp(G.idPattern);
+    const rows = new Map(); // id -> { fraction ppm, title, poster, label, labelEn, resume (JSON text), done, at }
+    const err = (code, message) => kinoError(code, `kino.progress: ${message}`);
+    const bad = (message) => err("bad_request", message);
+    const ppm = (f) => Math.min(1_000_000, Math.max(0, Math.round(f * 1_000_000)));
+    const unit = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : null);
+    const text = (o, key, max) => {
+      const v = o[key];
+      if (v === undefined || v === null) return null;
+      if (typeof v !== "string") throw bad(`${key} must be a string`);
+      if (v.length > max) throw bad(`${key} is over ${max} characters`);
+      return v;
+    };
+    const idOf = (id) => {
+      if (typeof id !== "string" || !idRe.test(id)) throw bad("id must be 1 to 128 characters of A-Z a-z 0-9 . _ ~ -");
+      return id;
+    };
+    const view = (id, r) => ({
+      id, fraction: r.ppm / 1_000_000, done: r.done, updatedAtMs: r.at,
+      ...(r.title !== null ? { title: r.title } : {}),
+      ...(r.poster !== null ? { poster: r.poster } : {}),
+      ...(r.label !== null ? { label: r.label } : {}),
+      ...(r.labelEn !== null ? { labelEn: r.labelEn } : {}),
+      ...(r.resume !== null ? { resume: JSON.parse(r.resume) } : {}),
+    });
+    const set = async (o) => {
+      if (o === null || typeof o !== "object" || Array.isArray(o)) throw bad("the argument must be an object");
+      const id = idOf(o.id);
+      const fraction = unit(o.fraction);
+      if (fraction === null) throw bad("fraction must be a finite number from 0 to 1");
+      const title = text(o, "title", MAX_TITLE_CHARS);
+      const label = text(o, "label", G.maxLabelChars);
+      const labelEn = text(o, "labelEn", G.maxLabelChars);
+      // The app seals a KinoImageRef of this plugin ({ source: "plugin", handle }) into an address of its own and keeps an https
+      // string; the kit keeps the same two (a ref as a stand-in string). Anything else costs only the poster.
+      const ref = o.poster !== null && typeof o.poster === "object" && o.poster.source === "plugin" && typeof o.poster.handle === "string" && o.poster.handle ? `kino-image:plugin:${o.poster.handle}` : null;
+      const poster = ref ?? (typeof o.poster === "string" && /^https:\/\/[^\s/]+/i.test(o.poster) ? o.poster : null);
+      let resume = null;
+      if (o.resume !== undefined && o.resume !== null) {
+        let s;
+        try { s = JSON.stringify(o.resume); } catch { s = undefined; }
+        if (typeof s !== "string") throw bad("resume must be a JSON value");
+        if (Buffer.byteLength(s, "utf8") > G.maxResumeBytes) throw err("too_large", `resume is over ${G.maxResumeBytes} bytes`);
+        resume = s;
+      }
+      if (o.done !== undefined && o.done !== null && typeof o.done !== "boolean") throw bad("done must be a boolean");
+      const doneAt = o.doneAt === undefined || o.doneAt === null ? null : unit(o.doneAt);
+      if (o.doneAt !== undefined && o.doneAt !== null && doneAt === null) throw bad("doneAt must be a finite number from 0 to 1");
+      const done = typeof o.done === "boolean" ? o.done : fraction >= (doneAt ?? G.doneAtDefault);
+
+      const live = rows.get(id);
+      const next = { ppm: ppm(fraction), title: title ?? live?.title ?? null, poster: poster ?? live?.poster ?? null, label, labelEn, resume, done, at: now() };
+      if (live && ["ppm", "title", "poster", "label", "labelEn", "resume", "done"].every((k) => live[k] === next[k])) return;
+      rows.delete(id); // a re-set moves to the end, so ties in the activity time keep the order the sets came in
+      rows.set(id, next);
+      // Over the cap, the oldest by last activity go (the first of equals is the one set earliest).
+      while (rows.size > G.maxElements) {
+        let oldest = null;
+        for (const [k, r] of rows) if (oldest === null || r.at < rows.get(oldest).at) oldest = k;
+        rows.delete(oldest);
+      }
+    };
+    const get = async (id) => {
+      const r = rows.get(idOf(id));
+      return r ? Object.freeze(view(id, r)) : null;
+    };
+    const clear = async (id) => { rows.delete(idOf(id)); };
+    const list = async (options) => {
+      let limit = G.listLimitDefault;
+      let since = 0;
+      if (options !== undefined && options !== null) {
+        if (typeof options !== "object" || Array.isArray(options)) throw bad("the options must be an object");
+        if (options.limit !== undefined && options.limit !== null) {
+          const l = options.limit;
+          if (typeof l !== "number" || !Number.isInteger(l) || l < 1 || l > G.listLimitMax) throw bad(`limit must be a whole number from 1 to ${G.listLimitMax}`);
+          limit = l;
+        }
+        if (options.sinceMs !== undefined && options.sinceMs !== null) {
+          const s = options.sinceMs;
+          if (typeof s !== "number" || !Number.isFinite(s) || s < 0) throw bad("sinceMs must be a finite number >= 0");
+          since = s;
+        }
+      }
+      return [...rows].filter(([, r]) => r.at >= since)
+        .sort(([ia, a], [ib, b]) => b.at - a.at || (ia < ib ? -1 : ia > ib ? 1 : 0))
+        .slice(0, limit).map(([id, r]) => Object.freeze(view(id, r)));
+    };
+    return Object.freeze({ set, get, clear, list });
+  })();
+
   // --- kino.files (apiVersion 21, capability "files"): the app's PluginFilesBridge behind its prelude wrapper. Node has no picker:
   // the files that are in the folder named by the `filesDir` option of createKino (else KINO_FILES_DIR, else ./.kino-files) are what
   // "the person picks": `pick` hands out the files there in name order (all of them with multiple, else the next one not handed out
@@ -2238,6 +2432,8 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     apiVersion: contract.apiVersion,
     appVersion,
     lang,
+    // contract.additiveFromApp["kino.pluginApiVersion"]: the plugin's feature apiVersion (base or highest applied enhancement).
+    pluginApiVersion: featureApiVersion(manifest),
     // Kino 0.9.55 (contract.additiveFromApp["kino.fetchAnyHost"]): true when this install's kino.fetch reaches any public host.
     fetchAnyHost: anyHost,
     // Kino 0.9.55 (contract.additiveFromApp["kino.device"]): the UI Kino shows, "phone" or "tv".
@@ -2248,8 +2444,9 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     sync: kinoSync,
     // apiVersion 14 (contract.manifest.screen.widgets): the widgets this Kino draws (their older names) and the type names the
     // docs list (contract.manifest.screen.aliases.names), for feature detection; `version` is the screen contract's own, 1
-    // until a widget changes meaning.
-    screen: Object.freeze({ widgets: Object.freeze([...contract.manifest.screen.widgets]), names: Object.freeze([...contract.manifest.screen.aliases.names]), version: 1 }),
+    // until a widget changes meaning. httpImages (contract.additiveFromApp["kino.screen.httpImages"], Kino 0.9.88):
+    // a screen's pictures may be http on a public host, as a poster; the kit checks them that way (screen.mjs screenPicture).
+    screen: Object.freeze({ widgets: Object.freeze([...contract.manifest.screen.widgets]), names: Object.freeze([...contract.manifest.screen.aliases.names]), version: 1, [contract.manifest.screen.httpImages.flag]: true }),
     fetch: fetchGated,
     html: Object.freeze({
       select() {
@@ -2340,6 +2537,8 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     // byTitle: true is Kino 0.9.55's feature flag (contract.additiveFromApp["kino.meta.byTitle"]).
     meta: manifest.apiVersion >= contract.kinoMeta.byTitle.apiVersion ? Object.assign(meta, { byTitle: true }) : meta,
     tmdb,
+    // Kino 0.9.84 (no new apiVersion, contract.kinoImage): a small picture from an address, Kino's work in the app.
+    image: Object.freeze({ thumbnail: imageThumbnail }),
     // Kino 0.9.71 (apiVersion 11, capability "nuvio"): the scrapers of the Nuvio repositories the manifest names. Feature-detect
     // it: typeof kino.nuvio === "object".
     nuvio: nuvioApi,
@@ -2354,12 +2553,16 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
     ...(featureApiVersion(manifest) >= contract.kinoAi.apiVersion ? { ai: aiApi } : {}),
     // apiVersion 15 (contract.kinoIdentity): present on every apiVersion 15 kino, like the app's (typeof kino.identity === "object").
     ...(featureApiVersion(manifest) >= contract.kinoIdentity.apiVersion ? { identity: identityApi } : {}),
+    // apiVersion 28 (contract.kinoVault): present on every apiVersion 28 kino (typeof kino.vault === "object").
+    ...(featureApiVersion(manifest) >= contract.kinoVault.apiVersion ? { vault: vaultApi } : {}),
     // apiVersion 15 (contract.kinoNotifications): present on every apiVersion 15 kino (typeof kino.notifications === "object").
     ...(featureApiVersion(manifest) >= contract.kinoNotifications.apiVersion ? { notifications: Object.freeze({ post: notificationsApi.post, clear: notificationsApi.clear }) } : {}),
     // apiVersion 16 (contract.kinoCoins): present on every apiVersion 16 kino (typeof kino.coins === "object").
     ...(featureApiVersion(manifest) >= contract.kinoCoins.apiVersion ? { coins: Object.freeze({ balance: coinsApi.balance, give: coinsApi.give }) } : {}),
     // apiVersion 21 (contract.files): present on every apiVersion 21 kino that declares the capability (typeof kino.files === "object").
     ...(featureApiVersion(manifest) >= contract.files.apiVersion && filesApi ? { files: filesApi } : {}),
+    // apiVersion 22 (contract.kinoProgress): present on every apiVersion 22 kino that declares the capability (typeof kino.progress === "object").
+    ...(featureApiVersion(manifest) >= contract.kinoProgress.apiVersion && progressApi ? { progress: progressApi } : {}),
     // apiVersion 14 (contract.kinoShared, Task 8q-2): one simulated device's store ([shared], createSharedDevices().phone or
     // .tv; a fresh one when none is given). Present on every apiVersion 14 kino, like the app's (typeof kino.shared === "object").
     ...(featureApiVersion(manifest) >= contract.kinoShared.apiVersion ? { shared: kitSharedApi(manifest, shared ?? createSharedStore({ now }), { now }) } : {}),
@@ -2378,6 +2581,22 @@ export function createKino(manifest, { appVersion = "sdk", filesDir = null, lang
           if (!protocol) throw protocolError("provider_missing", "no provider given to the kit: run with --provider <folder>");
           return protocol.call(alias, call, JSON.parse(text));
         },
+        // apiVersion 30 (contract.protocol.setup): ask Kino to set up another plugin / where that stands (Kino answers
+        // contract.protocol.setup.statusFields: { ready, running, progress?, label? }). The kit installs no other plugin, so after
+        // the app's order (the repo is checked first: bad_request) every target is not_installed.
+        ...(featureApiVersion(manifest) >= contract.protocol.setup.apiVersion ? {
+          async setup(repo, inputs) {
+            await null;
+            if (typeof repo !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw protocolError("bad_request", "kino.plugins.setup takes the target's repository (owner/name)");
+            if (inputs !== undefined && (inputs === null || typeof inputs !== "object" || Array.isArray(inputs))) throw protocolError("bad_request", "kino.plugins.setup: inputs is an object");
+            throw protocolError("not_installed", `kino.plugins.setup: ${repo} is not installed (the Node kit installs no other plugin)`);
+          },
+          async setupStatus(repo) {
+            await null;
+            if (typeof repo !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw protocolError("bad_request", "kino.plugins.setupStatus takes the target's repository (owner/name)");
+            throw protocolError("not_installed", `kino.plugins.setupStatus: ${repo} is not installed (the Node kit installs no other plugin)`);
+          },
+        } : {}),
       }),
     } : {}),
     // apiVersion 17: whether Kino's own row of a job is on ([jobsOn], the kit's stand-in for it), in a screen's call only.
@@ -2464,7 +2683,7 @@ export function signingLane(kino) {
   const refused = (api) => () => { throw why(api); };
   const methods = (names, api) => Object.freeze(Object.fromEntries(names.map((n) => [n, refused(api)])));
   // The app's lane host is no catalog or QR host: sign() has no kino.catalog and no kino.qr at all.
-  const { catalog: _noCatalog, qr: _noQr, visualBrowser: _noVisualBrowser, ...laneKino } = kino;
+  const { catalog: _noCatalog, qr: _noQr, visualBrowser: _noVisualBrowser, progress: _noProgress, ...laneKino } = kino;
   return Object.freeze({
     ...laneKino,
     fetch: async () => { throw kinoError("host_not_allowed", "sign can't use the network"); },
@@ -2474,6 +2693,7 @@ export function signingLane(kino) {
     sleep: async () => { throw why("kino.sleep"); },
     meta: async () => { throw why("kino.meta"); },
     tmdb: async () => { throw why("kino.tmdb"); },
+    image: Object.freeze({ thumbnail: async () => { throw why("kino.image"); } }),
     nuvio: Object.freeze({ available: async () => { throw why("kino.nuvio"); }, use: async () => { throw why("kino.nuvio"); }, scrapers: async () => { throw why("kino.nuvio"); }, streams: async () => { throw why("kino.nuvio"); } }),
     ...(kino.library ? { library: Object.freeze({ watched: async () => { throw why("kino.library"); }, saved: async () => { throw why("kino.library"); }, ...(kino.library.stats ? { stats: async () => { throw why("kino.library"); } } : {}) }) } : {}),
     ...(kino.room ? { room: Object.freeze(Object.fromEntries(contract.kinoRoom.functions.map((n) => [n, async () => { throw why("kino.room"); }]))) } : {}),
@@ -2484,7 +2704,7 @@ export function signingLane(kino) {
     ...(kino.coins ? { coins: Object.freeze({ balance: async () => { throw why("kino.coins"); }, give: async () => { throw why("kino.coins"); } }) } : {}),
     ...(kino.shared ? { shared: Object.freeze({ get: refused("kino.shared"), set: refused("kino.shared") }) } : {}),
     ...(kino.jobOn ? { jobOn: refused("kino.jobOn") } : {}),
-    ...(kino.plugins ? { plugins: Object.freeze({ call: async () => { throw why("kino.plugins"); } }) } : {}),
+    ...(kino.plugins ? { plugins: Object.freeze({ call: async () => { throw why("kino.plugins"); }, ...(kino.plugins.setup ? { setup: async () => { throw why("kino.plugins"); }, setupStatus: async () => { throw why("kino.plugins"); } } : {}) }) } : {}),
     ...(kino.browser ? { browser: Object.freeze({ captureAll: true, capture: async () => { throw why("kino.browser"); }, ...(kino.browser.page ? { page: async () => { throw why("kino.browser"); } } : {}) }) } : {}),
   });
 }
