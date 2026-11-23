@@ -381,7 +381,7 @@ export async function action(key) {
 
 // CineHD Plus delegates every hoster to kino-resolver (resolve() refuses with needResolver while it is missing), so the screen is the install gate until it is installed.
 let std = null;
-const standard = () => (std ??= makeStandardScreen({
+const standard = () => (std ??= makeStandardScreen({ snapshot: "xuper-plugin/kino-plugin-cinehdplus",
   kino, name: "CineHD Plus", logo: LOGO, logoAspect: LOGO_ASPECT, needsResolver: true, hasSettings: true,
   tabs: [
     { id: "novedades", label: "Novedades", labelEn: "What's new" },
