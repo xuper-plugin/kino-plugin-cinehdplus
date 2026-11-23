@@ -1,7 +1,7 @@
 {
   "id": "cinehdplus",
   "name": "CineHD Plus",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -143,7 +143,7 @@
       "label": "Abrir CineHD Plus",
       "labelEn": "Open CineHD Plus"
     },
-    "settingsIn": "screen"
+    "settingsIn": "both"
   },
   "consumes": {
     "resolver": {
