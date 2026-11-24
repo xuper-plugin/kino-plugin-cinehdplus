@@ -1384,8 +1384,51 @@ async function section({ tab } = {}) {
   if (first) answer.hero = { title: first.title, text: t("heroText"), image: first.poster };
   return answer;
 }
+var TILE_ART_SIZE = "w780";
+var GENRE_ART = {
+  accion: "/gqrnQA6Xppdl8vIb2eJc58VC1tW.jpg",
+  // Mad Max: Fury Road
+  animacion: "/g7CHF8gTLGooTbP4GznIGwaqAGL.jpg",
+  // Coco
+  anime: "/rqbCbjB19amtOtFQbb3K2lgm2zv.jpg",
+  // Attack on Titan
+  aventura: "/zPACwR32amTNvzId9qyapCWXYDJ.jpg",
+  // Raiders of the Lost Ark
+  belica: "/bdD39MpSVhKjxarTxLSfX6baoMP.jpg",
+  // Saving Private Ryan
+  "ciencia-ficcion": "/xJHokMbljvjADYdit5fK5VQsXEG.jpg",
+  // Interstellar
+  comedia: "/jK65srQczOKTpW62wPxwwKztGgE.jpg",
+  // The Grand Budapest Hotel
+  crimen: "/ejdD20cdHNFAYAN2DlqPToXKyzx.jpg",
+  // The Godfather
+  documental: "/sW7VOrkHKYIeV9PaYc5IqGU2XK8.jpg",
+  // My Octopus Teacher
+  drama: "/pNjh59JSxChQktamG3LMp9ZoQzp.jpg",
+  // The Shawshank Redemption
+  familia: "/iJgNOTSBNrC90U2xyYq9ln0b35o.jpg",
+  // Paddington 2
+  fantasia: "/oiwc338EoBgS4sEI2ixAny4KQKg.jpg",
+  // The Fellowship of the Ring
+  historia: "/m4MGxxEgAMqIX9x8MCg5pYeyYjU.jpg",
+  // The King's Speech
+  misterio: "/4HWAQu28e2yaWrtupFPGFkdNU7V.jpg",
+  // Knives Out
+  musica: "/dcvbs8z0GEXslC1kCT77x19XDeR.jpg",
+  // Bohemian Rhapsody
+  romance: "/zdXnJqBaGFVtLoPNuMeKfEYUViZ.jpg",
+  // The Notebook
+  suspense: "/iWak7wT0j6ycCc8lKr4NBz9c7n5.jpg",
+  // Gone Girl
+  terror: "/nHRUtBwFNnNN70vcQ7lAsjc2T6S.jpg",
+  // A Quiet Place
+  western: "/x4biAVdPVCghBlsVIzB6NmbghIz.jpg"
+  // The Good, the Bad and the Ugly
+};
+var tileArt = (table, slug) => table[slug] ? "https://image.tmdb.org/t/p/" + TILE_ART_SIZE + table[slug] : void 0;
+var withArt = (tile, art) => art ? { ...tile, art } : tile;
 async function categories() {
-  return GENRES.map(([slug, name]) => ({ id: "g-" + slug, title: name, ref: "genre:" + slug }));
+  return GENRES.map(([slug, name]) => withArt({ id: "g-" + slug, title: name, ref: "genre:" + slug }, tileArt(GENRE_ART, slug)));
 }
 var partsOf = (ref, prefix) => {
   const m = new RegExp(`^${prefix}:(\\d+):([A-Za-z0-9%._-]+)$`).exec(String(ref || ""));
