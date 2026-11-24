@@ -1,7 +1,7 @@
 {
   "id": "cinehdplus",
   "name": "CineHD Plus",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -187,6 +187,6 @@
   },
   "signature": {
     "authorKey": "6693946bd5c56196960959c4b9665fad5094374bcb85ddb282f8bf762c835263",
-    "value": "34db228bcb91bdfb6bca65aa15f3e06892611e91c49d154a27bf645570d9fcabac7906082d4d673dadad7743e0de51429aea877dfc381010a20d8b889b9dda0e"
+    "value": "a8001e9f16b3ecdc9c79102118c41add713910cd6f7518ad492d97a20e165fb502787bfacb1e79987ccb5af698f9dc6ed6aab325b949aab349d9929c2f899a07"
   }
 }

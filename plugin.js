@@ -1212,7 +1212,8 @@ function takeCapture(budget) {
   return true;
 }
 var MAX_COPIES = 10;
-var PREFETCH = 2;
+var PREFETCH = 5;
+globalThis.__kinoDropPendingFetches = true;
 var PAGE = 24;
 var STRINGS = {
   es: {

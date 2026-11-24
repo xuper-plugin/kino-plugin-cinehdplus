@@ -38,7 +38,12 @@ function takeCapture(budget) {
 }
 
 const MAX_COPIES = 10;
-const PREFETCH = 2; // embeds of the next servers read while one is tried (the site's four-page hop, ~2.3 s each)
+// Embeds of the next servers read while one is tried (the site's four-page hop, ~2.3 s each): a title whose first servers are
+// all gone (10 listed, none alive: 12.6 s to say so, measured 2026-11-24) no longer pays that hop once per server.
+const PREFETCH = 5;
+// Kino holds a call's answer until the requests it left running have ended; the hops read ahead for servers that were not
+// needed are of no use once a server plays.
+globalThis.__kinoDropPendingFetches = true;
 const PAGE = 24;
 const HLS = "application/vnd.apple.mpegurl";
 
