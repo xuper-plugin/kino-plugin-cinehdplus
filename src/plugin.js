@@ -51,7 +51,7 @@ const HLS = "application/vnd.apple.mpegurl";
 
 const STRINGS = {
   es: {
-    news: "Novedades", movies: "Películas", series: "Series", genres: "Géneros", popular: "Populares", recentMovies: "Películas recientes", recentSeries: "Series recientes",
+    news: "Novedades", movies: "Películas", series: "Series", genres: "Géneros", popular: "Populares", recentMovies: "Películas recientes", recentSeries: "Series recientes", kids: "Infantil",
     popularMovies: "Películas populares", popularSeries: "Series populares", topMovies: "Películas mejor valoradas", topSeries: "Series mejor valoradas", more: "Más",
     lat: "Latino", cast: "Castellano", sub: "Subtitulado", episode: "Episodio",
     heroText: "Películas y series en español, con estrenos al día.",
@@ -60,7 +60,7 @@ const STRINGS = {
     needResolver: "Para reproducir, abre CineHD Plus desde el menú e instala el motor de reproducción que te pedirá.",
   },
   en: {
-    news: "What's new", movies: "Movies", series: "Series", genres: "Genres", popular: "Popular", recentMovies: "Recent movies", recentSeries: "Recent series",
+    news: "What's new", movies: "Movies", series: "Series", genres: "Genres", popular: "Popular", recentMovies: "Recent movies", recentSeries: "Recent series", kids: "Kids",
     popularMovies: "Popular movies", popularSeries: "Popular series", topMovies: "Top rated movies", topSeries: "Top rated series", more: "More",
     lat: "Latino", cast: "Castilian", sub: "Subtitled", episode: "Episode",
     heroText: "Movies and series in Spanish, with new releases.",
@@ -139,23 +139,26 @@ async function listPage(def, page) {
 
 const safeRow = async (id, fn) => { try { return await fn(); } catch (e) { kino.log("row " + id + ": " + (e && e.message)); return null; } };
 
-async function rowOf(id, ref, genre) {
+async function rowOf(id, ref, genre, title) {
   const def = refOf(ref);
   const { cards } = await listPage(def, 1);
   const items = cards.slice(0, 20).map((c) => toItem(c, def.genreName));
-  return items.length ? { id, title: def.title, items, ref, genre: genre || def.genre || "peliculas" } : null;
+  return items.length ? { id, title: title || def.title, items, ref, genre: genre || def.genre || "peliculas" } : null;
 }
 
 // ---- exports ----
 
+/**
+ * The Home's rows: [id, ref, type tag, title key]. The tag is what Kino files the row's titles under: Películas, Series, Anime (the
+ * site's Anime genre, in the site's own order, newest first) and Infantil (its Familia genre).
+ */
+export const HOME_ROWS = [["peliculas", "list:peliculas"], ["series", "list:series"], ["anime", "genre:anime", "anime"], ["infantil", "genre:familia", "infantil", "kids"], ["populares", "list:populares"], ["spopulares", "list:spopulares"], ["mejores", "list:mejores"]];
+
+/** The type tag each Home row carries, by row id. */
+export const homeRowTags = () => Object.fromEntries(HOME_ROWS.map(([id, ref, genre]) => [id, genre || refOf(ref).genre]));
+
 export async function home() {
-  return homeWithin([
-    () => safeRow("peliculas", () => rowOf("peliculas", "list:peliculas")),
-    () => safeRow("series", () => rowOf("series", "list:series")),
-    () => safeRow("populares", () => rowOf("populares", "list:populares")),
-    () => safeRow("spopulares", () => rowOf("spopulares", "list:spopulares")),
-    () => safeRow("mejores", () => rowOf("mejores", "list:mejores")),
-  ]);
+  return homeWithin(HOME_ROWS.map(([id, ref, genre, key]) => () => safeRow(id, () => rowOf(id, ref, genre, key ? t(key) : undefined))));
 }
 
 export async function browse(ref, cursor) {

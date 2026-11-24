@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.13
+
+- Home: Anime and Infantil rows (the site's Anime and Familia genres), each filed under its own type; the Películas and Series rows were already typed
+
 ## 0.5.12
 
 - Categorías: every genre tile now shows a picture (a well-known TMDB backdrop per genre, no extra requests)

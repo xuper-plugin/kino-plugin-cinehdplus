@@ -1224,6 +1224,7 @@ var STRINGS = {
     popular: "Populares",
     recentMovies: "Pel\xEDculas recientes",
     recentSeries: "Series recientes",
+    kids: "Infantil",
     popularMovies: "Pel\xEDculas populares",
     popularSeries: "Series populares",
     topMovies: "Pel\xEDculas mejor valoradas",
@@ -1249,6 +1250,7 @@ var STRINGS = {
     popular: "Popular",
     recentMovies: "Recent movies",
     recentSeries: "Recent series",
+    kids: "Kids",
     popularMovies: "Popular movies",
     popularSeries: "Popular series",
     topMovies: "Top rated movies",
@@ -1338,20 +1340,16 @@ var safeRow = async (id, fn) => {
     return null;
   }
 };
-async function rowOf(id, ref, genre) {
+async function rowOf(id, ref, genre, title) {
   const def = refOf(ref);
   const { cards } = await listPage(def, 1);
   const items = cards.slice(0, 20).map((c) => toItem(c, def.genreName));
-  return items.length ? { id, title: def.title, items, ref, genre: genre || def.genre || "peliculas" } : null;
+  return items.length ? { id, title: title || def.title, items, ref, genre: genre || def.genre || "peliculas" } : null;
 }
+var HOME_ROWS = [["peliculas", "list:peliculas"], ["series", "list:series"], ["anime", "genre:anime", "anime"], ["infantil", "genre:familia", "infantil", "kids"], ["populares", "list:populares"], ["spopulares", "list:spopulares"], ["mejores", "list:mejores"]];
+var homeRowTags = () => Object.fromEntries(HOME_ROWS.map(([id, ref, genre]) => [id, genre || refOf(ref).genre]));
 async function home() {
-  return homeWithin([
-    () => safeRow("peliculas", () => rowOf("peliculas", "list:peliculas")),
-    () => safeRow("series", () => rowOf("series", "list:series")),
-    () => safeRow("populares", () => rowOf("populares", "list:populares")),
-    () => safeRow("spopulares", () => rowOf("spopulares", "list:spopulares")),
-    () => safeRow("mejores", () => rowOf("mejores", "list:mejores"))
-  ]);
+  return homeWithin(HOME_ROWS.map(([id, ref, genre, key]) => () => safeRow(id, () => rowOf(id, ref, genre, key ? t(key) : void 0))));
 }
 async function browse(ref, cursor) {
   const def = refOf(ref);
@@ -1650,12 +1648,14 @@ async function screenEvent(ev) {
 }
 var proto_catalog_search = catalogDoor(search);
 export {
+  HOME_ROWS,
   action,
   browse,
   categories,
   details,
   episodes,
   home,
+  homeRowTags,
   proto_catalog_search,
   resolve,
   screen,
