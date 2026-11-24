@@ -1212,6 +1212,7 @@ function takeCapture(budget) {
   return true;
 }
 var MAX_COPIES = 10;
+var PREFETCH = 2;
 var PAGE = 24;
 var STRINGS = {
   es: {
@@ -1480,8 +1481,8 @@ async function embedOf(frame, req) {
   const last = await post(req, action2, { vid, hash });
   return last.ok ? finalLink(await last.text()) : null;
 }
-async function open(button, req, budget) {
-  const embed = await embedOf(button.frame, req);
+async function open(embedPromise, budget) {
+  const embed = await embedPromise;
   if (!embed) return null;
   const out = await resolveViaHelper(embed, kino, SITE + "/", () => takeCapture(budget));
   return out;
@@ -1515,13 +1516,19 @@ async function resolve(ref) {
     }
     return stream;
   };
+  const embeds = /* @__PURE__ */ new Map();
+  const embedAt = (i) => {
+    if (!embeds.has(i)) embeds.set(i, buttons[i] ? embedOf(buttons[i].frame, req).catch(() => null) : Promise.resolve(null));
+    return embeds.get(i);
+  };
   let slow = null;
   const failures = [];
-  for (const i of order) {
+  for (const [k, i] of order.entries()) {
     const b = buttons[i];
     if (!b) continue;
+    for (const next of order.slice(k + 1, k + 1 + PREFETCH)) embedAt(next);
     try {
-      const out = await open(b, req, budget);
+      const out = await open(embedAt(i), budget);
       if (!out) {
         failures.push(`${b.domain}: no stream`);
         noteServer(b.domain, false);

@@ -38,6 +38,7 @@ function takeCapture(budget) {
 }
 
 const MAX_COPIES = 10;
+const PREFETCH = 2; // embeds of the next servers read while one is tried (the site's four-page hop, ~2.3 s each)
 const PAGE = 24;
 const HLS = "application/vnd.apple.mpegurl";
 
@@ -295,8 +296,8 @@ async function embedOf(frame, req) {
   return last.ok ? finalLink(await last.text()) : null;
 }
 
-async function open(button, req, budget) {
-  const embed = await embedOf(button.frame, req);
+async function open(embedPromise, budget) {
+  const embed = await embedPromise;
   if (!embed) return null;
   // Every hoster embed goes to the shared kino-resolver (door), which falls back to a WebView capture for gated
   // hosts (e.g. VOE) while this call still has capture budget. A `captured` stream skips the playable() probe below.
@@ -334,13 +335,21 @@ export async function resolve(ref) {
     }
     return stream;
   };
+  // A button's embed takes four small pages (~2.3 s, measured 2026-11-24). While one server is tried, the next ones' pages are
+  // already being read, so a dead server no longer adds those seconds before the next one can start.
+  const embeds = new Map();
+  const embedAt = (i) => {
+    if (!embeds.has(i)) embeds.set(i, buttons[i] ? embedOf(buttons[i].frame, req).catch(() => null) : Promise.resolve(null));
+    return embeds.get(i);
+  };
   let slow = null;
   const failures = [];
-  for (const i of order) {
+  for (const [k, i] of order.entries()) {
     const b = buttons[i];
     if (!b) continue;
+    for (const next of order.slice(k + 1, k + 1 + PREFETCH)) embedAt(next);
     try {
-      const out = await open(b, req, budget);
+      const out = await open(embedAt(i), budget);
       if (!out) { failures.push(`${b.domain}: no stream`); noteServer(b.domain, false); continue; }
       if (!out.captured) {
         const answer = await peek(kino, { url: out.url, headers: { "User-Agent": UA, ...(out.headers || {}) } });
